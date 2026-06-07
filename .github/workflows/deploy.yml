@@ -19,12 +19,13 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 20m
-          envs: POSTGRES_PASSWORD
+          envs: POSTGRES_PASSWORD,GITHUB_WEBHOOK_SECRET
           script: |
             set -euo pipefail
             cd /home/guardian/agentic-deployment-guardian
@@ -36,14 +37,16 @@ jobs:
 
             echo "::group::Write .env (managed by pipeline, never committed)"
             : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD secret is not set in the repository}"
+            : "${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET secret is not set in the repository}"
             umask 077
             cat > .env <<EOF
             POSTGRES_USER=guardian
             POSTGRES_DB=guardian_db
             POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
             ENVIRONMENT=production
+            GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
             EOF
-            echo ".env written (POSTGRES_DB=guardian_db, POSTGRES_USER=guardian, password from secret)"
+            echo ".env written (POSTGRES_DB=guardian_db, POSTGRES_USER=guardian, secrets from repo secrets)"
             echo "::endgroup::"
 
             echo "::group::Build and start containers"

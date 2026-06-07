@@ -1,0 +1,62 @@
+name: Notify Guardian on Failure
+
+# Fires after the deploy pipeline finishes. When that run failed, it POSTs a
+# signed failure event to the Guardian webhook receiver. Can also be run
+# manually (workflow_dispatch) to send a synthetic failure event for testing.
+on:
+  workflow_run:
+    workflows: ["Deploy Agentic Deployment Guardian"]
+    types: [completed]
+  workflow_dispatch: {}
+
+jobs:
+  notify:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send signed failure webhook to Guardian
+        env:
+          GUARDIAN_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          JOB_ID: ${{ github.event.workflow_run.id || github.run_id }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name || github.workflow }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion || 'failure' }}
+          HTML_URL: ${{ github.event.workflow_run.html_url || '' }}
+          EVENT_TIME: ${{ github.event.workflow_run.updated_at || '' }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          : "${GUARDIAN_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET repo secret is not set}"
+          : "${VPS_HOST:?VPS_HOST repo secret is not set}"
+
+          ts="${EVENT_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+          # Compact, single-line JSON. The exact bytes are what we both sign and send.
+          payload=$(jq -nc \
+            --arg job_id "$JOB_ID" \
+            --arg workflow "$WORKFLOW_NAME" \
+            --arg owner "$REPO_OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg sha "$HEAD_SHA" \
+            --arg branch "$HEAD_BRANCH" \
+            --arg conclusion "$CONCLUSION" \
+            --arg url "$HTML_URL" \
+            --arg ts "$ts" \
+            '{job_id:$job_id, workflow:$workflow, repository:{owner:$owner, name:$repo}, commit_sha:$sha, branch:$branch, conclusion:$conclusion, html_url:$url, timestamp:$ts, event:"workflow_run"}')
+
+          sig="sha256=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$GUARDIAN_WEBHOOK_SECRET" -r | cut -d' ' -f1)"
+
+          echo "Posting failure event for ${REPO_OWNER}/${REPO_NAME}@${HEAD_SHA:0:8} (conclusion=$CONCLUSION)"
+          code=$(curl -sS -m 15 -o /tmp/guardian_resp -w '%{http_code}' \
+            -X POST "http://${VPS_HOST}:8101/webhook/github" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: workflow_run" \
+            -H "X-Hub-Signature-256: ${sig}" \
+            --data-binary "$payload")
+          echo "Guardian responded HTTP ${code}:"
+          cat /tmp/guardian_resp || true
+          echo
+          test "$code" = "200"

@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://guardian:guardian@db:5432/guardian"
     redis_url: str = "redis://redis:6379/0"
 
+    # Shared secret used to validate GitHub webhook signatures (HMAC-SHA256).
+    # Written into .env by the deploy pipeline; never logged.
+    github_webhook_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

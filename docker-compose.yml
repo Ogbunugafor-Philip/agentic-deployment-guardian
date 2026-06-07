@@ -10,6 +10,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD:-guardian}@db:5432/${POSTGRES_DB:-guardian}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
     ports:
       - "8100:8100"          # FastAPI (assigned project port)
     depends_on:

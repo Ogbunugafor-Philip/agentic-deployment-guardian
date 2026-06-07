@@ -19,7 +19,9 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          # Repo secret names cannot start with GITHUB_ (reserved prefix), so the
+          # secret is stored as WEBHOOK_SECRET and exposed as GITHUB_WEBHOOK_SECRET.
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}

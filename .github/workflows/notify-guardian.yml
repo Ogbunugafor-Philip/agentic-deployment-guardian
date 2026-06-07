@@ -16,7 +16,8 @@ jobs:
     steps:
       - name: Send signed failure webhook to Guardian
         env:
-          GUARDIAN_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          # Stored as WEBHOOK_SECRET (GITHUB_ prefix is reserved for secret names).
+          GUARDIAN_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           JOB_ID: ${{ github.event.workflow_run.id || github.run_id }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name || github.workflow }}

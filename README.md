@@ -56,10 +56,12 @@ The receiver `POST /webhook/github`:
 
 ### Secret setup
 
-Add a repository secret **`GITHUB_WEBHOOK_SECRET`** (any long random string) under
-GitHub → Settings → Secrets and variables → Actions. The deploy pipeline writes it
-into `.env` on the VPS, and the notify workflow uses it to sign outgoing events —
-both sides share the one secret. `.env` is gitignored.
+Add a repository secret **`WEBHOOK_SECRET`** (any long random string) under
+GitHub → Settings → Secrets and variables → Actions. (GitHub reserves the
+`GITHUB_` prefix for secret names, so the repo secret is named `WEBHOOK_SECRET`;
+the workflows expose it to the app as the `GITHUB_WEBHOOK_SECRET` env var.) The
+deploy pipeline writes it into `.env` on the VPS, and the notify workflow uses it
+to sign outgoing events — both sides share the one secret. `.env` is gitignored.
 
 ### Testing the webhook
 

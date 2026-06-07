@@ -1,0 +1,23 @@
+name: Failure Drill
+
+# Manually-triggered job that fails on purpose, to verify the guardian end to
+# end: the native repo webhook delivers a workflow_job failure -> an incident is
+# recorded -> the Celery worker pulls THIS job's logs, parses them, and stores
+# the result. It does not touch the deploy pipeline.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build (simulated)
+        run: echo "Compiling the project..."
+
+      - name: Run tests (intentional failure)
+        run: |
+          echo "Running test suite..."
+          echo "tests/test_widget.py::test_addition FAILED"
+          echo "ERROR: AssertionError: expected 4 but got 5"
+          echo "Process exiting with a non-zero status"
+          exit 1

@@ -88,3 +88,49 @@ to sign outgoing events — both sides share the one secret. `.env` is gitignore
    ```
    A wrong/missing signature returns `401` and is **not** recorded — that is the
    expected, secure behaviour.
+
+## Phase 4 — Log retrieval and parsing engine
+
+When a **failure** incident is recorded, the webhook receiver enqueues a Celery
+task (`process_incident_logs`) on the Redis broker — no manual triggering. A
+dedicated `guardian-worker` container runs the task:
+
+1. **Pull** the failed job's raw logs from the GitHub REST API
+   (`GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs`) using `GH_PAT`. The
+   job id comes from the incident row (best sourced from `workflow_job` events,
+   whose `id` is the real job id).
+2. **Parse** them ([app/log_parser.py](app/log_parser.py)): strip per-line
+   timestamps and ANSI codes, collapse repeated blank lines, find the failed
+   step and exit code, and extract the most relevant error/exception/failure
+   lines into a clean summary.
+3. **Store** against the incident in PostgreSQL: `raw_log` (gzip-compressed),
+   `parsed_summary`, `failed_step`, `exit_code`, `log_status`, and
+   `log_retrieved_at`.
+
+`GET /incidents/{id}` returns the parsed summary, failed step, exit code, log
+status, and a decompressed log excerpt. **`GH_PAT` is never logged or stored in
+any column.**
+
+### Secret setup
+
+Add a repository secret **`GH_PAT`** (a GitHub Personal Access Token) under
+GitHub → Settings → Secrets and variables → Actions. It needs read access to
+Actions logs for this repo: a classic token with the `repo` scope, or a
+fine-grained token with **Actions: Read** + **Contents: Read**. The deploy
+pipeline writes it into `.env` on every deploy.
+
+### Verifying log retrieval
+
+1. Add the `GH_PAT` secret, then push (or re-run the deploy) so the pipeline
+   writes it and starts the `guardian-worker` container.
+2. Actions → **Failure Drill** → **Run workflow**. The job fails on purpose; the
+   native repo webhook delivers a `workflow_job` failure, which becomes an
+   incident and triggers automatic log retrieval.
+3. Inspect the result:
+   ```bash
+   curl http://<VPS_HOST>:8101/incidents            # find the new incident id + log_status
+   curl http://<VPS_HOST>:8101/incidents/<id>       # parsed_summary, failed_step, exit_code, excerpt
+   docker compose logs --tail=30 worker             # "Stored logs for incident #N ..."
+   ```
+   You should see `log_status=retrieved`, a `failed_step`, `exit_code=1`, and the
+   extracted failure lines (e.g. the AssertionError) in `parsed_summary`.

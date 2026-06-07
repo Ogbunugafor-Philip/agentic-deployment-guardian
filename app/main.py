@@ -10,10 +10,16 @@ from fastapi import BackgroundTasks, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.celery_app import celery
 from app.config import get_settings
 from app.db import check_database, check_redis
 from app.github_webhook import parse_event, verify_signature
-from app.models import create_tables, insert_incident, recent_incidents
+from app.models import (
+    create_tables,
+    get_incident_detail,
+    insert_incident,
+    recent_incidents,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,7 +86,8 @@ def health() -> JSONResponse:
 
 
 def _persist_incident(event: dict, payload: dict) -> None:
-    """Background task: write the incident to PostgreSQL and the app log."""
+    """Background task: write the incident to PostgreSQL and the app log, then
+    enqueue automatic log retrieval for failure events."""
     try:
         incident_id = insert_incident(event, payload)
         logger.info(
@@ -95,6 +102,14 @@ def _persist_incident(event: dict, payload: dict) -> None:
         )
     except Exception:  # noqa: BLE001
         logger.exception("Failed to persist incident to PostgreSQL")
+        return
+
+    if (event.get("conclusion") or "").lower() == "failure":
+        try:
+            celery.send_task("process_incident_logs", args=[incident_id])
+            logger.info("Enqueued log retrieval for incident #%s", incident_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to enqueue log retrieval for incident #%s", incident_id)
 
 
 @app.post("/webhook/github")
@@ -147,3 +162,12 @@ def list_incidents(limit: int = 20) -> JSONResponse:
     limit = max(1, min(limit, 100))
     rows = recent_incidents(limit)
     return JSONResponse(content={"count": len(rows), "incidents": rows})
+
+
+@app.get("/incidents/{incident_id}")
+def incident_detail(incident_id: int) -> JSONResponse:
+    """Return one incident incl. parsed summary, failed step, and a log excerpt."""
+    detail = get_incident_detail(incident_id)
+    if detail is None:
+        return JSONResponse(status_code=404, content={"detail": "incident not found"})
+    return JSONResponse(content=detail)

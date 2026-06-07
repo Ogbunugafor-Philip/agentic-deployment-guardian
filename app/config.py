@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Written into .env by the deploy pipeline; never logged.
     github_webhook_secret: str = ""
 
+    # GitHub Personal Access Token used to pull Actions job logs via the REST
+    # API. Written into .env by the pipeline; never logged or stored in the DB.
+    gh_pat: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

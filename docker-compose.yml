@@ -11,8 +11,28 @@ services:
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-production}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GH_PAT: ${GH_PAT:-}
     ports:
       - "8100:8100"          # FastAPI (assigned project port)
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - guardian-net
+
+  worker:
+    build: .
+    image: guardian-app:latest
+    container_name: guardian-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD:-guardian}@db:5432/${POSTGRES_DB:-guardian}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      GH_PAT: ${GH_PAT:-}
     depends_on:
       db:
         condition: service_healthy

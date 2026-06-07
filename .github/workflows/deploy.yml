@@ -6,7 +6,31 @@ on:
       - main
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run test suite (must pass before deploy)
+        env:
+          DATABASE_URL: postgresql+psycopg2://guardian:guardian@localhost:5432/guardian
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-test-secret
+          API_PASSWORD: ci-test-password
+          GUARDIAN_ENC_KEY: ci-test-enc-key
+          GITHUB_WEBHOOK_SECRET: test-webhook-secret
+        run: pytest --cov=app --cov-report=term-missing
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -62,6 +86,17 @@ jobs:
             : "${VPS_HOST:?VPS_HOST secret is not set in the repository}"
             : "${VPS_SSH_KEY_B64:?VPS_SSH_KEY secret is not set in the repository}"
             : "${GMAIL_APP_PASSWORD:?GMAIL_APP_PASSWORD secret is not set in the repository}"
+
+            # Phase 9: generate JWT/encryption/API secrets on first deploy and
+            # PRESERVE them across deploys (a changing GUARDIAN_ENC_KEY would make
+            # previously-encrypted data unreadable). Read existing values if any.
+            EX_JWT=$(grep -E '^JWT_SECRET=' .env 2>/dev/null | cut -d= -f2- || true)
+            EX_ENC=$(grep -E '^GUARDIAN_ENC_KEY=' .env 2>/dev/null | cut -d= -f2- || true)
+            EX_PW=$(grep -E '^API_PASSWORD=' .env 2>/dev/null | cut -d= -f2- || true)
+            JWT_SECRET=${EX_JWT:-$(openssl rand -hex 32)}
+            GUARDIAN_ENC_KEY=${EX_ENC:-$(openssl rand -hex 32)}
+            API_PASSWORD=${EX_PW:-$(openssl rand -hex 16)}
+
             umask 077
             cat > .env <<EOF
             POSTGRES_USER=guardian
@@ -79,6 +114,10 @@ jobs:
             GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
             GMAIL_FROM=philiposita1041@gmail.com
             GMAIL_TO=philiposita1041@gmail.com
+            JWT_SECRET=${JWT_SECRET}
+            API_USER=guardian
+            API_PASSWORD=${API_PASSWORD}
+            GUARDIAN_ENC_KEY=${GUARDIAN_ENC_KEY}
             EOF
             echo ".env written (POSTGRES_DB=guardian_db, POSTGRES_USER=guardian, secrets from repo secrets)"
             echo "::endgroup::"

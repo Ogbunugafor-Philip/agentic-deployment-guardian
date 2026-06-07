@@ -16,6 +16,11 @@ services:
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       GMAIL_FROM: ${GMAIL_FROM:-philiposita1041@gmail.com}
       GMAIL_TO: ${GMAIL_TO:-philiposita1041@gmail.com}
+      # Phase 9 — hardening
+      JWT_SECRET: ${JWT_SECRET:-}
+      API_USER: ${API_USER:-guardian}
+      API_PASSWORD: ${API_PASSWORD:-}
+      GUARDIAN_ENC_KEY: ${GUARDIAN_ENC_KEY:-}
     ports:
       - "8100:8100"          # FastAPI (assigned project port)
     depends_on:
@@ -51,6 +56,8 @@ services:
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       GMAIL_FROM: ${GMAIL_FROM:-philiposita1041@gmail.com}
       GMAIL_TO: ${GMAIL_TO:-philiposita1041@gmail.com}
+      # Phase 9 — hardening (worker needs the encryption key for raw logs)
+      GUARDIAN_ENC_KEY: ${GUARDIAN_ENC_KEY:-}
     depends_on:
       db:
         condition: service_healthy

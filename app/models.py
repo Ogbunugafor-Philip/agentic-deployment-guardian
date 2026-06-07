@@ -429,11 +429,13 @@ def get_incident_detail(incident_id: int) -> dict | None:
     item["raw_log_excerpt"] = None
     if raw:
         try:
-            decompressed = gzip.decompress(bytes(raw)).decode("utf-8", "replace")
+            from app.crypto import decrypt  # local import avoids import cycle
+
+            decompressed = gzip.decompress(decrypt(bytes(raw))).decode("utf-8", "replace")
             item["raw_log_chars"] = len(decompressed)
             item["raw_log_excerpt"] = decompressed[:2000]
         except Exception:  # noqa: BLE001
-            item["raw_log_excerpt"] = "<unable to decompress>"
+            item["raw_log_excerpt"] = "<unable to decrypt/decompress>"
 
     for key in (
         "event_timestamp",

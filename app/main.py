@@ -6,14 +6,17 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, Header, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
 
 from app import __version__
+from app.auth import authenticate, create_access_token, require_auth
 from app.celery_app import celery
 from app.config import get_settings
 from app.db import check_database, check_redis
 from app.github_webhook import parse_event, verify_signature
+from app.ratelimit import check_rate_limit, client_identifier
 from app.models import (
     create_tables,
     get_incident_detail,
@@ -52,8 +55,17 @@ app = FastAPI(
 )
 
 
+@app.post("/token")
+def issue_token(form: OAuth2PasswordRequestForm = Depends()) -> JSONResponse:
+    """Exchange the configured API credentials for a short-lived JWT."""
+    if not authenticate(form.username, form.password):
+        return JSONResponse(status_code=401, content={"detail": "invalid credentials"})
+    token = create_access_token(subject=form.username)
+    return JSONResponse(content={"access_token": token, "token_type": "bearer"})
+
+
 @app.get("/")
-def root() -> dict:
+def root(_subject: str = Depends(require_auth)) -> dict:
     return {
         "service": settings.app_name,
         "version": __version__,
@@ -125,7 +137,17 @@ async def github_webhook(
     Returns 200 as soon as the signature is verified; the database write and
     detailed logging happen in a background task so GitHub never times out.
     """
+    # Rate limit by client IP (honours nginx X-Forwarded-For).
+    identifier = client_identifier(request)
+    if not check_rate_limit(identifier):
+        logger.warning("Rate limit exceeded for %s on /webhook/github", identifier)
+        return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
+
     raw_body = await request.body()
+
+    # Reject oversized bodies before doing any work.
+    if len(raw_body) > settings.max_webhook_bytes:
+        return JSONResponse(status_code=413, content={"detail": "payload too large"})
 
     if not verify_signature(
         raw_body, settings.github_webhook_secret, x_hub_signature_256
@@ -158,7 +180,7 @@ async def github_webhook(
 
 
 @app.get("/incidents")
-def list_incidents(limit: int = 20) -> JSONResponse:
+def list_incidents(limit: int = 20, _subject: str = Depends(require_auth)) -> JSONResponse:
     """Return the most recently recorded incidents (for verification)."""
     limit = max(1, min(limit, 100))
     rows = recent_incidents(limit)
@@ -166,7 +188,7 @@ def list_incidents(limit: int = 20) -> JSONResponse:
 
 
 @app.get("/incidents/{incident_id}")
-def incident_detail(incident_id: int) -> JSONResponse:
+def incident_detail(incident_id: int, _subject: str = Depends(require_auth)) -> JSONResponse:
     """Return one incident incl. parsed summary, failed step, and a log excerpt."""
     detail = get_incident_detail(incident_id)
     if detail is None:
@@ -175,7 +197,7 @@ def incident_detail(incident_id: int) -> JSONResponse:
 
 
 @app.get("/patterns")
-def list_patterns() -> JSONResponse:
+def list_patterns(_subject: str = Depends(require_auth)) -> JSONResponse:
     """Return all identified recurring failure patterns (Phase 8)."""
     rows = list_failure_patterns()
     return JSONResponse(content={"count": len(rows), "patterns": rows})

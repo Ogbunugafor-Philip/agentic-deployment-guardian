@@ -10,6 +10,7 @@ from celery.signals import worker_ready
 
 from app.ai_agent import analyze_failure
 from app.celery_app import celery
+from app.crypto import encrypt
 from app.decision import classify_remediation
 from app.github_api import LogsNotFound, fetch_job_logs
 from app.log_parser import parse_logs
@@ -89,11 +90,13 @@ def process_incident_logs(self, incident_id: int) -> str:
             return "error"
 
     parsed = parse_logs(raw)
+    # Compress, then AES-256-GCM encrypt the raw log at rest (Phase 9 hardening).
     raw_gz = gzip.compress(raw.encode("utf-8", "replace"))
+    raw_blob = encrypt(raw_gz)
 
     update_incident_logs(
         incident_id,
-        raw_log=raw_gz,
+        raw_log=raw_blob,
         parsed_summary=parsed["summary"],
         failed_step=parsed["failed_step"],
         exit_code=parsed["exit_code"],

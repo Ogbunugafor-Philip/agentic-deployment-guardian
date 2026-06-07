@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     # App password written into .env by the pipeline; never logged.
     gmail_app_password: str = ""
 
+    # --- Phase 9: hardening ---
+    # JWT auth for management endpoints (not /health, not the HMAC webhook).
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60
+    api_user: str = "guardian"
+    api_password: str = ""
+    # AES-256-GCM master key for encrypting sensitive data at rest (raw logs).
+    guardian_enc_key: str = ""
+    # Webhook rate limit: max requests per IP per window (seconds).
+    webhook_rate_limit: int = 60
+    webhook_rate_window: int = 60
+    # Reject webhook bodies larger than this (bytes).
+    max_webhook_bytes: int = 2_000_000
+
 
 @lru_cache
 def get_settings() -> Settings:

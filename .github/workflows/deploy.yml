@@ -21,7 +21,38 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 20m
           script: |
+            set -euo pipefail
             cd /home/guardian/agentic-deployment-guardian
-            git pull origin main
+
+            echo "::group::Sync repository"
+            git fetch origin main
+            git reset --hard origin/main
+            echo "::endgroup::"
+
+            echo "::group::Build and start containers"
+            docker compose up -d --build --remove-orphans
+            docker compose ps
+            echo "::endgroup::"
+
+            echo "::group::Health check (FastAPI :8100)"
+            ok=0
+            for i in $(seq 1 40); do
+              if curl -fsS http://localhost:8100/health >/dev/null 2>&1; then
+                echo "FastAPI is healthy"; ok=1; break
+              fi
+              echo "waiting for FastAPI... attempt $i"; sleep 3
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "FastAPI did not become healthy in time"
+              docker compose logs --tail=80
+              exit 1
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Health check (Nginx reverse proxy :8101)"
+            curl -fsS http://localhost:8101/health >/dev/null && echo "Nginx proxy -> FastAPI is healthy"
+            echo "::endgroup::"
+
             echo "Deployment successful"

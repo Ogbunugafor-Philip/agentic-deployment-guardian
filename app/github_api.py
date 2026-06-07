@@ -13,6 +13,8 @@ from app.config import get_settings
 
 GITHUB_API = "https://api.github.com"
 
+_BOM = "﻿"
+
 
 class LogsNotFound(Exception):
     """The job exists but logs are unavailable (404 / expired)."""
@@ -41,4 +43,8 @@ def fetch_job_logs(owner: str, repo: str, job_id: str | int, timeout: int = 30) 
     if resp.status_code == 404:
         raise LogsNotFound(f"no logs for job {job_id} in {owner}/{repo}")
     resp.raise_for_status()
-    return resp.text
+    # GitHub's log blob is UTF-8 but served without a charset, so requests would
+    # otherwise guess Latin-1 and mangle non-ASCII. Force UTF-8 and drop any BOM.
+    resp.encoding = "utf-8"
+    text = resp.text
+    return text[1:] if text.startswith(_BOM) else text

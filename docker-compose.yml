@@ -28,6 +28,9 @@ services:
     container_name: guardian-worker
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    # The worker has no HTTP server, so disable the image's curl-based healthcheck.
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD:-guardian}@db:5432/${POSTGRES_DB:-guardian}
       REDIS_URL: redis://redis:6379/0

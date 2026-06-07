@@ -110,7 +110,9 @@ jobs:
             VPS_USER=${VPS_USER:-guardian}
             VPS_SSH_KEY_B64=${VPS_SSH_KEY_B64}
             REMEDIATION_ENABLED=${REMEDIATION_ENABLED:-true}
-            REMEDIATION_ROLLBACK_ENABLED=${REMEDIATION_ROLLBACK_ENABLED:-false}
+            # Phase 9.4: live rollback enabled for production. Requires a GH_PAT
+            # with Contents:Write + Workflows; otherwise the revert push fails safe.
+            REMEDIATION_ROLLBACK_ENABLED=${REMEDIATION_ROLLBACK_ENABLED:-true}
             GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
             GMAIL_FROM=philiposita1041@gmail.com
             GMAIL_TO=philiposita1041@gmail.com

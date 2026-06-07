@@ -39,6 +39,10 @@ def run_restart(incident: dict, service: str = "app") -> tuple[str, str]:
     except Exception:  # noqa: BLE001
         return "FAILED_RECOVERY", "Restart aborted: VPS_SSH_KEY_B64 is not valid base64."
 
+    # OpenSSH rejects a private key without a trailing newline ("error in libcrypto").
+    if not key_bytes.endswith(b"\n"):
+        key_bytes += b"\n"
+
     fd, key_path = tempfile.mkstemp(prefix="guardian_key_")
     try:
         os.write(fd, key_bytes)

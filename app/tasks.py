@@ -8,10 +8,17 @@ from datetime import datetime, timezone
 
 from celery.signals import worker_ready
 
+from app.ai_agent import analyze_failure
 from app.celery_app import celery
+from app.decision import classify_remediation
 from app.github_api import LogsNotFound, fetch_job_logs
 from app.log_parser import parse_logs
-from app.models import create_tables, get_incident_basic, update_incident_logs
+from app.models import (
+    create_tables,
+    get_incident_basic,
+    get_incident_for_analysis,
+    update_incident_logs,
+)
 
 logger = logging.getLogger("guardian.tasks")
 
@@ -92,4 +99,63 @@ def process_incident_logs(self, incident_id: int) -> str:
         len(raw),
         len(raw_gz),
     )
+
+    # Phase 5: chain AI root-cause analysis automatically once parsing is done.
+    analyze_incident.delay(incident_id)
+    logger.info("Enqueued AI analysis for incident #%s", incident_id)
     return "retrieved"
+
+
+@celery.task(
+    name="analyze_incident",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=20,
+)
+def analyze_incident(self, incident_id: int) -> str:
+    """Ask Cerebras for a plain-English root cause, then classify remediation."""
+    incident = get_incident_for_analysis(incident_id)
+    if not incident:
+        logger.warning("Incident #%s not found for analysis", incident_id)
+        return "not_found"
+
+    failed_step = incident.get("failed_step")
+    parsed_summary = incident.get("parsed_summary")
+    exit_code = incident.get("exit_code")
+
+    try:
+        result = analyze_failure(failed_step, parsed_summary, exit_code)
+    except Exception as exc:  # transport/API errors — retry, then record failure
+        logger.warning("AI analysis failed for incident #%s: %s", incident_id, exc.__class__.__name__)
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            update_incident_logs(
+                incident_id,
+                ai_status=f"error: {exc.__class__.__name__}",
+                analyzed_at=_now(),
+            )
+            return "error"
+
+    action, reason = classify_remediation(
+        failed_step,
+        result["root_cause"],
+        parsed_summary,
+        exit_code,
+        result.get("severity_hint"),
+    )
+
+    update_incident_logs(
+        incident_id,
+        root_cause=result["root_cause"],
+        remediation_action=action,
+        ai_status="analyzed",
+        analyzed_at=_now(),
+    )
+    logger.info(
+        "AI analysis for incident #%s: remediation=%s (%s)",
+        incident_id,
+        action,
+        reason,
+    )
+    return "analyzed"

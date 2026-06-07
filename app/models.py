@@ -52,6 +52,11 @@ incidents = Table(
     Column("exit_code", Integer),
     Column("log_status", Text),              # retrieved | no_logs | error | skipped
     Column("log_retrieved_at", DateTime(timezone=True)),
+    # Phase 5 — AI root-cause analysis + remediation decision
+    Column("root_cause", Text),              # plain-English diagnosis from Cerebras
+    Column("remediation_action", Text),      # AUTO_ROLLBACK | SERVICE_RESTART | HUMAN_ESCALATION
+    Column("ai_status", Text),               # analyzed | error | skipped
+    Column("analyzed_at", DateTime(timezone=True)),
 )
 
 # Idempotent migration so existing tables gain the Phase 4 columns. create_all
@@ -63,6 +68,10 @@ _PHASE4_COLUMNS = [
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS exit_code INTEGER",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS log_status TEXT",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS log_retrieved_at TIMESTAMPTZ",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS root_cause TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediation_action TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS ai_status TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMPTZ",
 ]
 
 
@@ -121,6 +130,20 @@ def get_incident_basic(incident_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def get_incident_for_analysis(incident_id: int) -> dict | None:
+    """Fields the AI analysis task needs."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(
+                incidents.c.id,
+                incidents.c.failed_step,
+                incidents.c.parsed_summary,
+                incidents.c.exit_code,
+            ).where(incidents.c.id == incident_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
 def update_incident_logs(incident_id: int, **fields) -> None:
     """Update the log* columns of an incident. Keys must be valid column names."""
     if not fields:
@@ -143,6 +166,8 @@ def recent_incidents(limit: int = 20) -> list[dict]:
         incidents.c.failed_step,
         incidents.c.exit_code,
         incidents.c.log_status,
+        incidents.c.remediation_action,
+        incidents.c.ai_status,
         incidents.c.log_retrieved_at,
         incidents.c.received_at,
     ]
@@ -183,7 +208,7 @@ def get_incident_detail(incident_id: int) -> dict | None:
         except Exception:  # noqa: BLE001
             item["raw_log_excerpt"] = "<unable to decompress>"
 
-    for key in ("event_timestamp", "received_at", "log_retrieved_at"):
+    for key in ("event_timestamp", "received_at", "log_retrieved_at", "analyzed_at"):
         if item.get(key) is not None:
             item[key] = item[key].isoformat()
     return item

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     # API. Written into .env by the pipeline; never logged or stored in the DB.
     gh_pat: str = ""
 
+    # Cerebras API key + model for AI root-cause analysis. Key written into .env
+    # by the pipeline; never logged or stored in the DB.
+    cerebras_api_key: str = ""
+    cerebras_model: str = "gpt-oss-120b"
+
 
 @lru_cache
 def get_settings() -> Settings:

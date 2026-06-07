@@ -12,6 +12,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       GH_PAT: ${GH_PAT:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
     ports:
       - "8100:8100"          # FastAPI (assigned project port)
     depends_on:
@@ -36,6 +37,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: ${ENVIRONMENT:-production}
       GH_PAT: ${GH_PAT:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy

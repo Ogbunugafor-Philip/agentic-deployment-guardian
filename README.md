@@ -134,3 +134,40 @@ pipeline writes it into `.env` on every deploy.
    ```
    You should see `log_status=retrieved`, a `failed_step`, `exit_code=1`, and the
    extracted failure lines (e.g. the AssertionError) in `parsed_summary`.
+
+## Phase 5 — AI root-cause analysis + remediation decision
+
+As soon as Phase 4 parsing finishes (`log_status=retrieved`), the Celery task
+chains a second task, `analyze_incident` — no manual step:
+
+1. A **LangChain agent** ([app/ai_agent.py](app/ai_agent.py)) sends the
+   `failed_step` + `parsed_summary` to **Cerebras** (`gpt-oss-120b`) with a
+   structured prompt asking it to identify the exact failure point, explain in
+   plain English why it failed, and suggest the most likely fix.
+2. The plain-English diagnosis is stored in the `root_cause` column.
+3. A **decision matrix** ([app/decision.py](app/decision.py)) classifies the
+   incident as `AUTO_ROLLBACK`, `SERVICE_RESTART`, or `HUMAN_ESCALATION` (based
+   on the failed step + root cause, with the model's severity as a tiebreaker
+   and a safe `HUMAN_ESCALATION` default) and stores it in `remediation_action`.
+
+`GET /incidents/{id}` includes `root_cause`, `remediation_action`, `ai_status`,
+and `analyzed_at`. **`CEREBRAS_API_KEY` is never logged or stored.**
+
+### Secret setup
+
+Add a repository secret **`CEREBRAS_API_KEY`** under GitHub → Settings → Secrets
+and variables → Actions. The deploy pipeline writes it into `.env` on every
+deploy.
+
+### Verifying the full Phase 5 flow
+
+After deploying (with `CEREBRAS_API_KEY` set), trigger a failure as in Phase 4
+(the **Failure Drill** workflow, or a signed webhook with a real failed job id),
+then:
+```bash
+curl http://<VPS_HOST>:8101/incidents/<id>
+docker compose logs --tail=40 worker   # "AI analysis for incident #N: remediation=..."
+```
+Within a few seconds of `log_status=retrieved` you should see `ai_status=analyzed`,
+a clear plain-English `root_cause`, and a `remediation_action` of one of the three
+levels.

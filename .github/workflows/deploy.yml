@@ -126,8 +126,11 @@ jobs:
 
             echo "::group::Build and start containers"
             docker compose up -d --build --remove-orphans
+            # Force-recreate the stateless services so .env/secret changes always
+            # take effect (compose may skip recreation on an env-only change).
+            docker compose up -d --force-recreate --no-deps app worker
             # Reload nginx so it re-reads its config and re-resolves the app
-            # upstream (app may have been recreated with a new IP by --build).
+            # upstream (app may have been recreated with a new IP).
             docker compose restart nginx
             docker compose ps
             echo "::endgroup::"

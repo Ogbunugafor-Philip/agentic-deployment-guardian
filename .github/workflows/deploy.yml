@@ -80,6 +80,9 @@ jobs:
 
             echo "::group::Build and start containers"
             docker compose up -d --build --remove-orphans
+            # Reload nginx so it re-reads its config and re-resolves the app
+            # upstream (app may have been recreated with a new IP by --build).
+            docker compose restart nginx
             docker compose ps
             echo "::endgroup::"
 

@@ -19,7 +19,9 @@ jobs:
           # Stored as WEBHOOK_SECRET (GITHUB_ prefix is reserved for secret names).
           GUARDIAN_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
-          JOB_ID: ${{ github.event.workflow_run.id || github.run_id }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          REPO_FULL: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name || github.workflow }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
@@ -30,10 +32,27 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
-          : "${GUARDIAN_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET repo secret is not set}"
+          : "${GUARDIAN_WEBHOOK_SECRET:?WEBHOOK_SECRET repo secret is not set}"
           : "${VPS_HOST:?VPS_HOST repo secret is not set}"
+          : "${GH_PAT:?GH_PAT repo secret is not set}"
 
           ts="${EVENT_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+          # Resolve the actual failed JOB id within the run (the run id alone is
+          # not a job id, so the guardian's job-logs lookup would 404). Prefer a
+          # job whose conclusion is "failure"; otherwise fall back to the first
+          # job, then to the run id as a last resort.
+          jobs_json=$(curl -sS -m 15 \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO_FULL}/actions/runs/${RUN_ID}/jobs?per_page=100" || echo '{}')
+          JOB_ID=$(printf '%s' "$jobs_json" | jq -r '([.jobs[]? | select(.conclusion=="failure")][0].id) // (.jobs[0].id) // empty')
+          if [ -z "$JOB_ID" ]; then
+            echo "WARN: could not resolve a job id from run ${RUN_ID}; falling back to run id"
+            JOB_ID="$RUN_ID"
+          fi
+          echo "Resolved job id ${JOB_ID} for run ${RUN_ID}"
 
           # Compact, single-line JSON. The exact bytes are what we both sign and send.
           payload=$(jq -nc \

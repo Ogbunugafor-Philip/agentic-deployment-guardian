@@ -44,6 +44,13 @@ owner/name, commit SHA, branch, conclusion, timestamp), signs it with
 `GITHUB_WEBHOOK_SECRET` (HMAC-SHA256, `X-Hub-Signature-256` — GitHub's own
 scheme), and POSTs it to the receiver.
 
+The receiver also accepts genuine GitHub repository webhooks signed with the same
+secret — it parses the `workflow_run`, `workflow_job`, and the Actions-sender
+payload shapes. (A native repo webhook subscribed to *Workflow jobs* / *Workflow
+runs* delivers events for **all** conclusions, including successes; the
+Actions-based `notify-guardian` sender fires on **failure only**. Scope or remove
+the native webhook if you want failures only.)
+
 The receiver `POST /webhook/github`:
 - validates the signature against `GITHUB_WEBHOOK_SECRET` (rejects with 401 if
   missing/invalid);

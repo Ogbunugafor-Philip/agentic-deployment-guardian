@@ -60,6 +60,24 @@ def parse_event(payload: dict) -> dict:
             ),
         }
 
+    workflow_job = payload.get("workflow_job")
+    if isinstance(workflow_job, dict):
+        # Native GitHub workflow_job webhook shape. job_id is the real job id;
+        # conclusion is null until the job's status is "completed".
+        return {
+            "job_id": str(workflow_job.get("id") or ""),
+            "workflow": workflow_job.get("workflow_name") or workflow_job.get("name"),
+            "repo_owner": owner,
+            "repo_name": repo.get("name"),
+            "commit_sha": workflow_job.get("head_sha"),
+            "branch": workflow_job.get("head_branch"),
+            "conclusion": workflow_job.get("conclusion"),
+            "html_url": workflow_job.get("html_url"),
+            "event_timestamp": _parse_timestamp(
+                workflow_job.get("completed_at") or workflow_job.get("started_at")
+            ),
+        }
+
     # Flat shape produced by our notify-guardian GitHub Actions workflow.
     return {
         "job_id": str(payload.get("job_id") or ""),

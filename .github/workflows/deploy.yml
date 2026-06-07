@@ -15,6 +15,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Base64-encode the SSH key to a single line so it survives .env and the
+      # ssh-action env transport. The key is read from an env var (safe for the
+      # multiline value) and written to $GITHUB_ENV, never to the logs.
+      - name: Encode SSH key for runtime remediation
+        env:
+          RAW_VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: echo "VPS_SSH_KEY_B64=$(printf '%s' "$RAW_VPS_SSH_KEY" | base64 -w0)" >> "$GITHUB_ENV"
+
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -24,12 +32,18 @@ jobs:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           GH_PAT: ${{ secrets.GH_PAT }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY_B64: ${{ env.VPS_SSH_KEY_B64 }}
+          # Optional repo Variables; empty -> safe defaults (restart on, rollback off).
+          REMEDIATION_ENABLED: ${{ vars.REMEDIATION_ENABLED }}
+          REMEDIATION_ROLLBACK_ENABLED: ${{ vars.REMEDIATION_ROLLBACK_ENABLED }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 20m
-          envs: POSTGRES_PASSWORD,GITHUB_WEBHOOK_SECRET,GH_PAT,CEREBRAS_API_KEY
+          envs: POSTGRES_PASSWORD,GITHUB_WEBHOOK_SECRET,GH_PAT,CEREBRAS_API_KEY,VPS_HOST,VPS_USER,VPS_SSH_KEY_B64,REMEDIATION_ENABLED,REMEDIATION_ROLLBACK_ENABLED
           script: |
             set -euo pipefail
             cd /home/guardian/agentic-deployment-guardian
@@ -44,6 +58,8 @@ jobs:
             : "${GITHUB_WEBHOOK_SECRET:?WEBHOOK_SECRET secret is not set in the repository}"
             : "${GH_PAT:?GH_PAT secret is not set in the repository}"
             : "${CEREBRAS_API_KEY:?CEREBRAS_API_KEY secret is not set in the repository}"
+            : "${VPS_HOST:?VPS_HOST secret is not set in the repository}"
+            : "${VPS_SSH_KEY_B64:?VPS_SSH_KEY secret is not set in the repository}"
             umask 077
             cat > .env <<EOF
             POSTGRES_USER=guardian
@@ -53,6 +69,11 @@ jobs:
             GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
             GH_PAT=${GH_PAT}
             CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
+            VPS_HOST=${VPS_HOST}
+            VPS_USER=${VPS_USER:-guardian}
+            VPS_SSH_KEY_B64=${VPS_SSH_KEY_B64}
+            REMEDIATION_ENABLED=${REMEDIATION_ENABLED:-true}
+            REMEDIATION_ROLLBACK_ENABLED=${REMEDIATION_ROLLBACK_ENABLED:-false}
             EOF
             echo ".env written (POSTGRES_DB=guardian_db, POSTGRES_USER=guardian, secrets from repo secrets)"
             echo "::endgroup::"

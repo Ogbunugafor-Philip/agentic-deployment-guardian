@@ -29,6 +29,22 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     cerebras_model: str = "gpt-oss-120b"
 
+    # --- Phase 6: autonomous remediation ---
+    # Master switch: when false, SERVICE_RESTART is dry-run (no SSH/restart).
+    remediation_enabled: bool = True
+    # Gate the production push for AUTO_ROLLBACK separately; dry-run when false.
+    remediation_rollback_enabled: bool = False
+    # Health endpoint polled to confirm recovery (app service over compose net).
+    health_check_url: str = "http://app:8100/health"
+    recovery_timeout_seconds: int = 300
+    recovery_poll_interval: int = 10
+    # SSH target for SERVICE_RESTART. Key is base64-encoded in .env to stay
+    # single-line. None of these are ever logged.
+    vps_host: str = ""
+    vps_user: str = "guardian"
+    vps_ssh_key_b64: str = ""
+    project_dir: str = "/home/guardian/agentic-deployment-guardian"
+
 
 @lru_cache
 def get_settings() -> Settings:

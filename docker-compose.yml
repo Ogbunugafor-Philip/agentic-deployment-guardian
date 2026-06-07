@@ -38,6 +38,13 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       GH_PAT: ${GH_PAT:-}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      # Phase 6 — autonomous remediation
+      REMEDIATION_ENABLED: ${REMEDIATION_ENABLED:-true}
+      REMEDIATION_ROLLBACK_ENABLED: ${REMEDIATION_ROLLBACK_ENABLED:-false}
+      HEALTH_CHECK_URL: ${HEALTH_CHECK_URL:-http://app:8100/health}
+      VPS_HOST: ${VPS_HOST:-}
+      VPS_USER: ${VPS_USER:-guardian}
+      VPS_SSH_KEY_B64: ${VPS_SSH_KEY_B64:-}
     depends_on:
       db:
         condition: service_healthy

@@ -171,3 +171,51 @@ docker compose logs --tail=40 worker   # "AI analysis for incident #N: remediati
 Within a few seconds of `log_status=retrieved` you should see `ai_status=analyzed`,
 a clear plain-English `root_cause`, and a `remediation_action` of one of the three
 levels.
+
+## Phase 6 — Autonomous remediation engine
+
+The moment Phase 5 sets `remediation_action`, the Celery task chains
+`remediate_incident` automatically (no manual step). It dispatches one of three
+paths and then confirms recovery:
+
+- **AUTO_ROLLBACK** ([app/rollback.py](app/rollback.py)) — finds the last
+  successful deploy commit via the GitHub API and reverts `main` to it (a new
+  commit that triggers a deploy). **Default: dry-run** (records the planned
+  revert without pushing). Set repo Variable `REMEDIATION_ROLLBACK_ENABLED=true`
+  to perform the real revert (needs a write-scoped `GH_PAT`). A loop guard
+  refuses to roll back when `main` is already a guardian rollback.
+- **SERVICE_RESTART** ([app/restart.py](app/restart.py)) — SSHes to the VPS
+  (`VPS_SSH_KEY`, base64 in `.env`) and runs `docker compose restart app`.
+  **Default: live** (master switch `REMEDIATION_ENABLED`).
+- **HUMAN_ESCALATION** ([app/remediation.py](app/remediation.py)) — flags the
+  incident, stores a clear `escalation_reason`, and a structured
+  `escalation_summary` (JSON) for the reporting phase.
+
+**Confirmation checks (6.4):** after AUTO_ROLLBACK and SERVICE_RESTART the engine
+polls `HEALTH_CHECK_URL` (default `http://app:8100/health`) until healthy or a
+5-minute timeout, then writes `remediation_status` (`RECOVERED`,
+`FAILED_RECOVERY`, or `ESCALATED`) and `remediated_at`. All credentials
+(SSH key, tokens) are kept out of logs and the database.
+
+### Verifying each path independently
+
+The native automatic flow picks the path from the AI classification. To exercise
+each path directly, seed an already-analyzed incident with a chosen action and
+let the engine run (the script runs inside the worker container):
+
+```bash
+# on the VPS, in the project dir
+docker exec -e ACTION=HUMAN_ESCALATION -i guardian-worker python3 - < scripts/seed_remediation.py
+docker exec -e ACTION=SERVICE_RESTART  -i guardian-worker python3 - < scripts/seed_remediation.py
+docker exec -e ACTION=AUTO_ROLLBACK    -i guardian-worker python3 - < scripts/seed_remediation.py
+
+# then inspect the printed incident id
+curl http://<VPS_HOST>:8101/incidents/<id>
+docker compose logs --tail=40 worker     # "Remediation for incident #N: action=... status=..."
+```
+
+Expect: HUMAN_ESCALATION → `remediation_status=ESCALATED` with `escalation_reason`
++ `escalation_summary`; SERVICE_RESTART → app restarted and `RECOVERED`;
+AUTO_ROLLBACK → dry-run detail naming the last-good commit and `RECOVERED` (health
+still OK). The end-to-end automatic chain is verified by the **Failure Drill**
+workflow, which flows webhook → logs → AI → remediation.

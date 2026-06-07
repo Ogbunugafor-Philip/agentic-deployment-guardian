@@ -20,6 +20,79 @@ class LogsNotFound(Exception):
     """The job exists but logs are unavailable (404 / expired)."""
 
 
+def _headers() -> dict:
+    token = get_settings().gh_pat
+    if not token:
+        raise RuntimeError("GH_PAT is not configured")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "agentic-deployment-guardian",
+    }
+
+
+def get_last_successful_deploy_sha(
+    owner: str,
+    repo: str,
+    workflow_name: str = "Deploy Agentic Deployment Guardian",
+    exclude_sha: str | None = None,
+    timeout: int = 30,
+) -> str | None:
+    """Return the head SHA of the most recent *successful* deploy run."""
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/actions/runs?status=success&per_page=50"
+    resp = requests.get(url, headers=_headers(), timeout=timeout)
+    resp.raise_for_status()
+    for run in resp.json().get("workflow_runs", []):
+        if run.get("name") == workflow_name and run.get("conclusion") == "success":
+            sha = run.get("head_sha")
+            if sha and (exclude_sha is None or not sha.startswith(exclude_sha)):
+                return sha
+    return None
+
+
+def get_ref_sha(owner: str, repo: str, ref: str = "heads/main", timeout: int = 30) -> str:
+    resp = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/{ref}", headers=_headers(), timeout=timeout
+    )
+    resp.raise_for_status()
+    return resp.json()["object"]["sha"]
+
+
+def get_commit(owner: str, repo: str, sha: str, timeout: int = 30) -> dict:
+    resp = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/git/commits/{sha}", headers=_headers(), timeout=timeout
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def create_commit(
+    owner: str, repo: str, message: str, tree_sha: str, parent_sha: str, timeout: int = 30
+) -> str:
+    """Create a commit object (write scope required) and return its SHA."""
+    resp = requests.post(
+        f"{GITHUB_API}/repos/{owner}/{repo}/git/commits",
+        headers=_headers(),
+        json={"message": message, "tree": tree_sha, "parents": [parent_sha]},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()["sha"]
+
+
+def update_ref(owner: str, repo: str, ref: str, sha: str, timeout: int = 30) -> dict:
+    """Move a ref (e.g. heads/main) to a new commit (write scope required)."""
+    resp = requests.patch(
+        f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/{ref}",
+        headers=_headers(),
+        json={"sha": sha, "force": False},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def fetch_job_logs(owner: str, repo: str, job_id: str | int, timeout: int = 30) -> str:
     """Return the raw plain-text logs for a single Actions job.
 

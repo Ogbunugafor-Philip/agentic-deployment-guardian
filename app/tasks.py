@@ -17,8 +17,12 @@ from app.models import (
     create_tables,
     get_incident_basic,
     get_incident_for_analysis,
+    get_incident_for_remediation,
     update_incident_logs,
 )
+from app.remediation import run_escalation
+from app.restart import run_restart
+from app.rollback import run_rollback
 
 logger = logging.getLogger("guardian.tasks")
 
@@ -158,4 +162,45 @@ def analyze_incident(self, incident_id: int) -> str:
         action,
         reason,
     )
+
+    # Phase 6: chain the autonomous remediation engine automatically.
+    remediate_incident.delay(incident_id)
+    logger.info("Enqueued remediation for incident #%s (action=%s)", incident_id, action)
     return "analyzed"
+
+
+@celery.task(name="remediate_incident", bind=True, max_retries=0)
+def remediate_incident(self, incident_id: int) -> str:
+    """Dispatch the remediation action and record recovery status."""
+    incident = get_incident_for_remediation(incident_id)
+    if not incident:
+        logger.warning("Incident #%s not found for remediation", incident_id)
+        return "not_found"
+
+    action = incident.get("remediation_action")
+    fields: dict = {}
+
+    try:
+        if action == "AUTO_ROLLBACK":
+            status, detail = run_rollback(incident)
+        elif action == "SERVICE_RESTART":
+            status, detail = run_restart(incident)
+        else:  # HUMAN_ESCALATION or anything unexpected -> escalate to a human
+            status, detail, reason, summary = run_escalation(incident)
+            fields["escalation_reason"] = reason
+            fields["escalation_summary"] = summary
+    except Exception as exc:  # noqa: BLE001 - never let remediation crash silently
+        logger.exception("Remediation crashed for incident #%s", incident_id)
+        status, detail = "FAILED_RECOVERY", f"Remediation error: {exc.__class__.__name__}"
+
+    update_incident_logs(
+        incident_id,
+        remediation_status=status,
+        remediation_detail=detail,
+        remediated_at=_now(),
+        **fields,
+    )
+    logger.info(
+        "Remediation for incident #%s: action=%s status=%s", incident_id, action, status
+    )
+    return status

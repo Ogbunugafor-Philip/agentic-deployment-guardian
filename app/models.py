@@ -57,6 +57,12 @@ incidents = Table(
     Column("remediation_action", Text),      # AUTO_ROLLBACK | SERVICE_RESTART | HUMAN_ESCALATION
     Column("ai_status", Text),               # analyzed | error | skipped
     Column("analyzed_at", DateTime(timezone=True)),
+    # Phase 6 — autonomous remediation engine
+    Column("remediation_status", Text),      # RECOVERED | FAILED_RECOVERY | ESCALATED
+    Column("remediation_detail", Text),      # human-readable action + outcome log
+    Column("escalation_reason", Text),       # why a human is needed (HUMAN_ESCALATION)
+    Column("escalation_summary", Text),      # structured JSON summary for reporting
+    Column("remediated_at", DateTime(timezone=True)),
 )
 
 # Idempotent migration so existing tables gain the Phase 4 columns. create_all
@@ -72,6 +78,11 @@ _PHASE4_COLUMNS = [
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediation_action TEXT",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS ai_status TEXT",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMPTZ",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediation_status TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediation_detail TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_reason TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_summary TEXT",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediated_at TIMESTAMPTZ",
 ]
 
 
@@ -144,6 +155,28 @@ def get_incident_for_analysis(incident_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def get_incident_for_remediation(incident_id: int) -> dict | None:
+    """Fields the remediation engine needs."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(
+                incidents.c.id,
+                incidents.c.remediation_action,
+                incidents.c.repo_owner,
+                incidents.c.repo_name,
+                incidents.c.job_id,
+                incidents.c.commit_sha,
+                incidents.c.branch,
+                incidents.c.conclusion,
+                incidents.c.failed_step,
+                incidents.c.exit_code,
+                incidents.c.root_cause,
+                incidents.c.html_url,
+            ).where(incidents.c.id == incident_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
 def update_incident_logs(incident_id: int, **fields) -> None:
     """Update the log* columns of an incident. Keys must be valid column names."""
     if not fields:
@@ -168,6 +201,7 @@ def recent_incidents(limit: int = 20) -> list[dict]:
         incidents.c.log_status,
         incidents.c.remediation_action,
         incidents.c.ai_status,
+        incidents.c.remediation_status,
         incidents.c.log_retrieved_at,
         incidents.c.received_at,
     ]
@@ -208,7 +242,13 @@ def get_incident_detail(incident_id: int) -> dict | None:
         except Exception:  # noqa: BLE001
             item["raw_log_excerpt"] = "<unable to decompress>"
 
-    for key in ("event_timestamp", "received_at", "log_retrieved_at", "analyzed_at"):
+    for key in (
+        "event_timestamp",
+        "received_at",
+        "log_retrieved_at",
+        "analyzed_at",
+        "remediated_at",
+    ):
         if item.get(key) is not None:
             item[key] = item[key].isoformat()
     return item

@@ -32,6 +32,7 @@ jobs:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           GH_PAT: ${{ secrets.GH_PAT }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY_B64: ${{ env.VPS_SSH_KEY_B64 }}
@@ -43,7 +44,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 20m
-          envs: POSTGRES_PASSWORD,GITHUB_WEBHOOK_SECRET,GH_PAT,CEREBRAS_API_KEY,VPS_HOST,VPS_USER,VPS_SSH_KEY_B64,REMEDIATION_ENABLED,REMEDIATION_ROLLBACK_ENABLED
+          envs: POSTGRES_PASSWORD,GITHUB_WEBHOOK_SECRET,GH_PAT,CEREBRAS_API_KEY,GMAIL_APP_PASSWORD,VPS_HOST,VPS_USER,VPS_SSH_KEY_B64,REMEDIATION_ENABLED,REMEDIATION_ROLLBACK_ENABLED
           script: |
             set -euo pipefail
             cd /home/guardian/agentic-deployment-guardian
@@ -60,6 +61,7 @@ jobs:
             : "${CEREBRAS_API_KEY:?CEREBRAS_API_KEY secret is not set in the repository}"
             : "${VPS_HOST:?VPS_HOST secret is not set in the repository}"
             : "${VPS_SSH_KEY_B64:?VPS_SSH_KEY secret is not set in the repository}"
+            : "${GMAIL_APP_PASSWORD:?GMAIL_APP_PASSWORD secret is not set in the repository}"
             umask 077
             cat > .env <<EOF
             POSTGRES_USER=guardian
@@ -74,6 +76,9 @@ jobs:
             VPS_SSH_KEY_B64=${VPS_SSH_KEY_B64}
             REMEDIATION_ENABLED=${REMEDIATION_ENABLED:-true}
             REMEDIATION_ROLLBACK_ENABLED=${REMEDIATION_ROLLBACK_ENABLED:-false}
+            GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+            GMAIL_FROM=philiposita1041@gmail.com
+            GMAIL_TO=philiposita1041@gmail.com
             EOF
             echo ".env written (POSTGRES_DB=guardian_db, POSTGRES_USER=guardian, secrets from repo secrets)"
             echo "::endgroup::"

@@ -7,6 +7,7 @@ import logging
 import time
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Integer,
@@ -63,6 +64,9 @@ incidents = Table(
     Column("escalation_reason", Text),       # why a human is needed (HUMAN_ESCALATION)
     Column("escalation_summary", Text),      # structured JSON summary for reporting
     Column("remediated_at", DateTime(timezone=True)),
+    # Phase 7 — incident reporting / Gmail notification
+    Column("report_sent", Boolean, server_default=text("false")),
+    Column("report_sent_at", DateTime(timezone=True)),
 )
 
 # Idempotent migration so existing tables gain the Phase 4 columns. create_all
@@ -83,6 +87,8 @@ _PHASE4_COLUMNS = [
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_reason TEXT",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_summary TEXT",
     "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS remediated_at TIMESTAMPTZ",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS report_sent BOOLEAN DEFAULT false",
+    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS report_sent_at TIMESTAMPTZ",
 ]
 
 
@@ -177,6 +183,32 @@ def get_incident_for_remediation(incident_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def get_incident_report(incident_id: int) -> dict | None:
+    """All fields needed to build the incident report email."""
+    cols = [
+        incidents.c.id,
+        incidents.c.repo_owner,
+        incidents.c.repo_name,
+        incidents.c.branch,
+        incidents.c.commit_sha,
+        incidents.c.failed_step,
+        incidents.c.exit_code,
+        incidents.c.root_cause,
+        incidents.c.remediation_action,
+        incidents.c.remediation_status,
+        incidents.c.remediation_detail,
+        incidents.c.escalation_reason,
+        incidents.c.html_url,
+        incidents.c.received_at,
+        incidents.c.remediated_at,
+    ]
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(*cols).where(incidents.c.id == incident_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
 def update_incident_logs(incident_id: int, **fields) -> None:
     """Update the log* columns of an incident. Keys must be valid column names."""
     if not fields:
@@ -248,6 +280,7 @@ def get_incident_detail(incident_id: int) -> dict | None:
         "log_retrieved_at",
         "analyzed_at",
         "remediated_at",
+        "report_sent_at",
     ):
         if item.get(key) is not None:
             item[key] = item[key].isoformat()

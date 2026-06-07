@@ -13,14 +13,17 @@ from app.celery_app import celery
 from app.decision import classify_remediation
 from app.github_api import LogsNotFound, fetch_job_logs
 from app.log_parser import parse_logs
+from app.email_sender import send_email
 from app.models import (
     create_tables,
     get_incident_basic,
     get_incident_for_analysis,
     get_incident_for_remediation,
+    get_incident_report,
     update_incident_logs,
 )
 from app.remediation import run_escalation
+from app.report import build_html, build_subject, build_text
 from app.restart import run_restart
 from app.rollback import run_rollback
 
@@ -203,4 +206,43 @@ def remediate_incident(self, incident_id: int) -> str:
     logger.info(
         "Remediation for incident #%s: action=%s status=%s", incident_id, action, status
     )
+
+    # Phase 7: email the incident report automatically once remediation is done.
+    send_incident_report.delay(incident_id)
+    logger.info("Enqueued incident report email for incident #%s", incident_id)
     return status
+
+
+@celery.task(
+    name="send_incident_report",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=20,
+)
+def send_incident_report(self, incident_id: int) -> str:
+    """Compile the report and email it via Gmail. Failures are logged, not fatal."""
+    incident = get_incident_report(incident_id)
+    if not incident:
+        logger.warning("Incident #%s not found for reporting", incident_id)
+        return "not_found"
+
+    subject = build_subject(incident)
+    try:
+        send_email(subject, build_html(incident), build_text(incident))
+    except Exception as exc:  # noqa: BLE001 - never crash the pipeline on email failure
+        # str(exc) is the SMTP server response, which does not contain the password.
+        logger.warning(
+            "Incident report email FAILED for #%s (%s: %s)",
+            incident_id,
+            exc.__class__.__name__,
+            exc,
+        )
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            logger.error("Giving up emailing incident report for #%s after retries", incident_id)
+            return "email_error"
+
+    update_incident_logs(incident_id, report_sent=True, report_sent_at=_now())
+    logger.info("Incident report emailed for #%s: %s", incident_id, subject)
+    return "sent"

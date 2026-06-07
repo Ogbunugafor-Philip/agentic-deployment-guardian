@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     vps_ssh_key_b64: str = ""
     project_dir: str = "/home/guardian/agentic-deployment-guardian"
 
+    # --- Phase 7: Gmail incident reporting ---
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    gmail_from: str = "philiposita1041@gmail.com"
+    gmail_to: str = "philiposita1041@gmail.com"
+    # App password written into .env by the pipeline; never logged.
+    gmail_app_password: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

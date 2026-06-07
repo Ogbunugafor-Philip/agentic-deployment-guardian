@@ -13,6 +13,9 @@ services:
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       GH_PAT: ${GH_PAT:-}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      GMAIL_FROM: ${GMAIL_FROM:-philiposita1041@gmail.com}
+      GMAIL_TO: ${GMAIL_TO:-philiposita1041@gmail.com}
     ports:
       - "8100:8100"          # FastAPI (assigned project port)
     depends_on:
@@ -45,6 +48,9 @@ services:
       VPS_HOST: ${VPS_HOST:-}
       VPS_USER: ${VPS_USER:-guardian}
       VPS_SSH_KEY_B64: ${VPS_SSH_KEY_B64:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      GMAIL_FROM: ${GMAIL_FROM:-philiposita1041@gmail.com}
+      GMAIL_TO: ${GMAIL_TO:-philiposita1041@gmail.com}
     depends_on:
       db:
         condition: service_healthy

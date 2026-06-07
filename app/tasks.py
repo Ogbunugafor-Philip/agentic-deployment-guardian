@@ -20,8 +20,10 @@ from app.models import (
     get_incident_for_analysis,
     get_incident_for_remediation,
     get_incident_report,
+    insert_deployment_history,
     update_incident_logs,
 )
+from app.patterns import match_for, recompute_patterns
 from app.remediation import run_escalation
 from app.report import build_html, build_subject, build_text
 from app.restart import run_restart
@@ -130,8 +132,18 @@ def analyze_incident(self, incident_id: int) -> str:
     parsed_summary = incident.get("parsed_summary")
     exit_code = incident.get("exit_code")
 
+    # Phase 8: feed any matching historical pattern back into the prompt.
+    pattern = match_for(failed_step, exit_code)
+    if pattern:
+        logger.info(
+            "Incident #%s matches known pattern '%s' (seen %sx) — added to Cerebras prompt",
+            incident_id,
+            pattern.get("pattern_label"),
+            pattern.get("occurrence_count"),
+        )
+
     try:
-        result = analyze_failure(failed_step, parsed_summary, exit_code)
+        result = analyze_failure(failed_step, parsed_summary, exit_code, pattern=pattern)
     except Exception as exc:  # transport/API errors — retry, then record failure
         logger.warning("AI analysis failed for incident #%s: %s", incident_id, exc.__class__.__name__)
         try:
@@ -227,8 +239,11 @@ def send_incident_report(self, incident_id: int) -> str:
         return "not_found"
 
     subject = build_subject(incident)
+    result = "sent"
     try:
         send_email(subject, build_html(incident), build_text(incident))
+        update_incident_logs(incident_id, report_sent=True, report_sent_at=_now())
+        logger.info("Incident report emailed for #%s: %s", incident_id, subject)
     except Exception as exc:  # noqa: BLE001 - never crash the pipeline on email failure
         # str(exc) is the SMTP server response, which does not contain the password.
         logger.warning(
@@ -241,8 +256,19 @@ def send_incident_report(self, incident_id: int) -> str:
             raise self.retry(exc=exc)
         except self.MaxRetriesExceededError:
             logger.error("Giving up emailing incident report for #%s after retries", incident_id)
-            return "email_error"
+            result = "email_error"
 
-    update_incident_logs(incident_id, report_sent=True, report_sent_at=_now())
-    logger.info("Incident report emailed for #%s: %s", incident_id, subject)
-    return "sent"
+    # Phase 8: incident cycle complete — record long-term history + refresh patterns.
+    _finalize_incident(incident_id)
+    return result
+
+
+def _finalize_incident(incident_id: int) -> None:
+    """Write the deployment_history summary and recompute failure patterns.
+    Runs once per incident at the end of its cycle; never raises."""
+    try:
+        insert_deployment_history(incident_id)
+        recompute_patterns()
+        logger.info("Finalized incident #%s into deployment history", incident_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Finalize (history/patterns) failed for incident #%s", incident_id)

@@ -39,7 +39,8 @@ _SYSTEM = (
 _HUMAN = (
     "Failed step: {failed_step}\n"
     "Exit code: {exit_code}\n"
-    "Parsed log summary:\n{parsed_summary}\n\n"
+    "Parsed log summary:\n{parsed_summary}\n"
+    "{pattern_note}\n"
     "Return the JSON now."
 )
 
@@ -73,8 +74,24 @@ def _build_chain():
     return prompt | llm
 
 
+def _pattern_note(pattern: dict | None) -> str:
+    """Phase 8: extra prompt context when this failure matches a known pattern."""
+    if not pattern:
+        return ""
+    return (
+        "\nThis failure matches a known pattern: "
+        f"\"{pattern.get('pattern_label')}\". "
+        f"It has occurred {pattern.get('occurrence_count')} times before. "
+        f"Previous suggested fix: {pattern.get('suggested_fix') or 'n/a'}. "
+        "Use this history to diagnose faster and more confidently.\n"
+    )
+
+
 def analyze_failure(
-    failed_step: str | None, parsed_summary: str | None, exit_code: int | None
+    failed_step: str | None,
+    parsed_summary: str | None,
+    exit_code: int | None,
+    pattern: dict | None = None,
 ) -> dict:
     """Return {root_cause, failure_point, explanation, suggested_fix, severity_hint, model}.
 
@@ -91,6 +108,7 @@ def analyze_failure(
             "failed_step": failed_step or "unknown",
             "exit_code": exit_code if exit_code is not None else "unknown",
             "parsed_summary": (parsed_summary or "<no parsed summary available>")[:6000],
+            "pattern_note": _pattern_note(pattern),
         }
     )
     content = getattr(response, "content", None) or str(response)

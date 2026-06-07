@@ -219,3 +219,24 @@ Expect: HUMAN_ESCALATION → `remediation_status=ESCALATED` with `escalation_rea
 AUTO_ROLLBACK → dry-run detail naming the last-good commit and `RECOVERED` (health
 still OK). The end-to-end automatic chain is verified by the **Failure Drill**
 workflow, which flows webhook → logs → AI → remediation.
+
+## Phase 8 — Deployment history & pattern recognition
+
+When an incident finishes its full cycle (after the report step), the worker:
+
+1. Writes a one-row summary into **`deployment_history`** — a separate long-term
+   record (the live `incidents` table keeps full detail). Idempotent per incident.
+2. Runs **pattern recognition** ([app/patterns.py](app/patterns.py)): groups
+   history by failed step + exit code, and when the same failure has occurred
+   **2+ times** records it in **`failure_patterns`** (`pattern_label`,
+   `failed_step`, `occurrence_count`, `first_seen`, `last_seen`, `suggested_fix`)
+   with a human label (e.g. "Recurring test failure", "Repeated env/config
+   failure", "Repeated service crash").
+
+**Feedback loop (8.3):** before analysing a new incident, the worker looks up a
+matching pattern and, if found, injects it into the Cerebras prompt — *"This
+failure matches a known pattern: [label]. It has occurred [N] times before.
+Previous suggested fix: [fix]"* — so diagnoses get faster and more consistent as
+history accumulates.
+
+`GET /patterns` lists all identified failure patterns. All of this is automatic.

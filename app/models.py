@@ -21,6 +21,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 
 from app.db import engine
@@ -67,6 +68,41 @@ incidents = Table(
     # Phase 7 — incident reporting / Gmail notification
     Column("report_sent", Boolean, server_default=text("false")),
     Column("report_sent_at", DateTime(timezone=True)),
+)
+
+# Phase 8 — long-term record of every completed incident (separate from the live
+# incidents table). One row per incident, written when the full cycle finishes.
+deployment_history = Table(
+    "deployment_history",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("incident_id", Integer, unique=True),
+    Column("repository", Text),
+    Column("branch", Text),
+    Column("commit_sha", String(64)),
+    Column("failed_step", Text),
+    Column("exit_code", Integer),
+    Column("root_cause", Text),
+    Column("remediation_action", Text),
+    Column("remediation_status", Text),
+    Column("report_sent", Boolean),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Phase 8 — recurring failure patterns mined from deployment_history.
+failure_patterns = Table(
+    "failure_patterns",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("pattern_key", Text, unique=True),
+    Column("pattern_label", Text),
+    Column("failed_step", Text),
+    Column("exit_code", Integer),
+    Column("occurrence_count", Integer),
+    Column("first_seen", DateTime(timezone=True)),
+    Column("last_seen", DateTime(timezone=True)),
+    Column("suggested_fix", Text),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
 )
 
 # Idempotent migration so existing tables gain the Phase 4 columns. create_all
@@ -246,6 +282,131 @@ def recent_incidents(limit: int = 20) -> list[dict]:
     for row in rows:
         item = dict(row)
         for key in ("log_retrieved_at", "received_at"):
+            if item.get(key) is not None:
+                item[key] = item[key].isoformat()
+        result.append(item)
+    return result
+
+
+def insert_deployment_history(incident_id: int) -> bool:
+    """Write a one-row summary of a completed incident into deployment_history.
+    Idempotent: a duplicate incident_id is ignored (ON CONFLICT DO NOTHING)."""
+    with engine.begin() as conn:
+        inc = conn.execute(
+            select(
+                incidents.c.id,
+                incidents.c.repo_owner,
+                incidents.c.repo_name,
+                incidents.c.branch,
+                incidents.c.commit_sha,
+                incidents.c.failed_step,
+                incidents.c.exit_code,
+                incidents.c.root_cause,
+                incidents.c.remediation_action,
+                incidents.c.remediation_status,
+                incidents.c.report_sent,
+            ).where(incidents.c.id == incident_id)
+        ).mappings().first()
+        if not inc:
+            return False
+        repo = (
+            f"{inc['repo_owner']}/{inc['repo_name']}"
+            if inc["repo_owner"]
+            else inc["repo_name"]
+        )
+        stmt = (
+            pg_insert(deployment_history)
+            .values(
+                incident_id=inc["id"],
+                repository=repo,
+                branch=inc["branch"],
+                commit_sha=inc["commit_sha"],
+                failed_step=inc["failed_step"],
+                exit_code=inc["exit_code"],
+                root_cause=inc["root_cause"],
+                remediation_action=inc["remediation_action"],
+                remediation_status=inc["remediation_status"],
+                report_sent=inc["report_sent"],
+            )
+            .on_conflict_do_nothing(index_elements=["incident_id"])
+        )
+        conn.execute(stmt)
+        return True
+
+
+def fetch_recurring_groups(min_count: int = 2) -> list[dict]:
+    """Group history by (failed_step, exit_code); return groups seen >= min_count."""
+    sql = text(
+        """
+        SELECT failed_step,
+               exit_code,
+               count(*) AS occurrence_count,
+               min(created_at) AS first_seen,
+               max(created_at) AS last_seen,
+               (array_agg(root_cause ORDER BY created_at DESC)
+                  FILTER (WHERE root_cause IS NOT NULL))[1] AS latest_root_cause
+        FROM deployment_history
+        WHERE failed_step IS NOT NULL
+        GROUP BY failed_step, exit_code
+        HAVING count(*) >= :min_count
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"min_count": min_count}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def upsert_failure_pattern(
+    pattern_key: str,
+    pattern_label: str,
+    failed_step: str | None,
+    exit_code: int | None,
+    occurrence_count: int,
+    first_seen,
+    last_seen,
+    suggested_fix: str,
+) -> None:
+    with engine.begin() as conn:
+        stmt = pg_insert(failure_patterns).values(
+            pattern_key=pattern_key,
+            pattern_label=pattern_label,
+            failed_step=failed_step,
+            exit_code=exit_code,
+            occurrence_count=occurrence_count,
+            first_seen=first_seen,
+            last_seen=last_seen,
+            suggested_fix=suggested_fix,
+            updated_at=func.now(),
+        ).on_conflict_do_update(
+            index_elements=["pattern_key"],
+            set_={
+                "pattern_label": pattern_label,
+                "occurrence_count": occurrence_count,
+                "last_seen": last_seen,
+                "suggested_fix": suggested_fix,
+                "updated_at": func.now(),
+            },
+        )
+        conn.execute(stmt)
+
+
+def find_matching_pattern(pattern_key: str) -> dict | None:
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(failure_patterns).where(failure_patterns.c.pattern_key == pattern_key)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def list_failure_patterns() -> list[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(failure_patterns).order_by(failure_patterns.c.occurrence_count.desc())
+        ).mappings().all()
+    result: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        for key in ("first_seen", "last_seen", "updated_at"):
             if item.get(key) is not None:
                 item[key] = item[key].isoformat()
         result.append(item)

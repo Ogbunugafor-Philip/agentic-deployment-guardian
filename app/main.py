@@ -18,6 +18,7 @@ from app.models import (
     create_tables,
     get_incident_detail,
     insert_incident,
+    list_failure_patterns,
     recent_incidents,
 )
 
@@ -171,3 +172,10 @@ def incident_detail(incident_id: int) -> JSONResponse:
     if detail is None:
         return JSONResponse(status_code=404, content={"detail": "incident not found"})
     return JSONResponse(content=detail)
+
+
+@app.get("/patterns")
+def list_patterns() -> JSONResponse:
+    """Return all identified recurring failure patterns (Phase 8)."""
+    rows = list_failure_patterns()
+    return JSONResponse(content={"count": len(rows), "patterns": rows})

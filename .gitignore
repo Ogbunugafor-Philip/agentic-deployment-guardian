@@ -8,3 +8,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Local Claude Code config
+.claude/
